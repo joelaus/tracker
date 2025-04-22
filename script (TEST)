@@ -35,6 +35,16 @@
     function addGlobalStyles() {
         const styles = document.createElement('style');
         styles.textContent = `
+            #caseCounter {
+                position: fixed;
+                z-index: 9999;
+                font-family: Arial, sans-serif;
+                font-size: 14px;
+                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+                min-width: 220px;
+                user-select: none;
+                transition: background-color 0.3s ease;
+            }
             .counter-section {
                 margin: 10px 0;
                 padding: 8px 0;
@@ -153,9 +163,20 @@
                 visibility: visible;
                 bottom: 120%;
             }
+            #counterContent {
+                transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+                max-height: 0;
+                opacity: 0;
+                overflow: hidden;
+            }
+            #counterContent.expanded {
+                max-height: 1000px;
+                opacity: 1;
+            }
         `;
         document.head.appendChild(styles);
     }
+
     function getCaseIdFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
         return urlParams.get('caseId');
@@ -173,7 +194,7 @@
     }
 
     function adjustColor(color, amount) {
-        return '#' + color.replace(/^#/, '').replace(/../g, color =>
+        return '#' + color.replace(/^#/, '').replace(/../g, color => 
             ('0' + Math.min(255, Math.max(0, parseInt(color, 16) + amount)).toString(16)).substr(-2)
         );
     }
@@ -192,7 +213,7 @@
         }
 
         const timerDisplay = document.getElementById('timerDisplay');
-
+        
         timerInterval = setInterval(() => {
             if (timerDisplay) {
                 const elapsedSeconds = Math.floor((Date.now() - timerState.startTime) / 1000);
@@ -209,20 +230,19 @@
     function makeDraggable(element, handle) {
         let isDragging = false;
         let startX, startY;
-        let lastX = 0, lastY = 0;
 
         function onDragStart(e) {
             if (e.target === handle || handle.contains(e.target)) {
                 isDragging = true;
-                startX = e.clientX - lastX;
-                startY = e.clientY - lastY;
+                startX = e.clientX - element.offsetLeft;
+                startY = e.clientY - element.offsetTop;
                 e.preventDefault();
             }
         }
 
         function onDrag(e) {
             if (!isDragging) return;
-
+            
             requestAnimationFrame(() => {
                 const x = e.clientX - startX;
                 const y = e.clientY - startY;
@@ -230,10 +250,11 @@
                 const maxX = window.innerWidth - element.offsetWidth;
                 const maxY = window.innerHeight - element.offsetHeight;
 
-                lastX = Math.min(Math.max(0, x), maxX);
-                lastY = Math.min(Math.max(0, y), maxY);
+                const newX = Math.min(Math.max(0, x), maxX);
+                const newY = Math.min(Math.max(0, y), maxY);
 
-                element.style.transform = `translate3d(${lastX}px, ${lastY}px, 0)`;
+                element.style.left = `${newX}px`;
+                element.style.top = `${newY}px`;
             });
         }
 
@@ -241,8 +262,8 @@
             if (isDragging) {
                 isDragging = false;
                 GM_setValue('counterPosition', JSON.stringify({
-                    left: `${lastX}px`,
-                    top: `${lastY}px`
+                    left: element.style.left,
+                    top: element.style.top
                 }));
             }
         }
@@ -251,43 +272,27 @@
         document.addEventListener('mousemove', onDrag);
         document.addEventListener('mouseup', onDragEnd);
     }
+
     function createCounter() {
         const counter = document.createElement('div');
         counter.id = 'caseCounter';
-
+        
         const savedColor = GM_getValue('counterColor', colorPalette[0].color);
         const isExpanded = GM_getValue('counterExpanded', true);
         const savedPosition = JSON.parse(GM_getValue('counterPosition', '{"left": "10px", "top": "10px"}'));
-
+        
         counter.style.cssText = `
-            position: fixed;
-            left: 0;
-            top: 0;
-            transform: translate3d(${savedPosition.left}, ${savedPosition.top}, 0);
+            left: ${savedPosition.left};
+            top: ${savedPosition.top};
             background: ${savedColor};
             color: white;
             padding: 0;
             border-radius: 5px;
-            z-index: 9999;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
-            min-width: 220px;
-            user-select: none;
-            transition: background-color 0.3s ease;
         `;
 
         const header = document.createElement('div');
         header.className = 'counter-header';
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px;
-            background: ${adjustColor(savedColor, -20)};
-            border-radius: 5px 5px 0 0;
-            cursor: move;
-        `;
+        header.style.background = adjustColor(savedColor, -20);
 
         const title = document.createElement('div');
         title.textContent = 'Case Counter';
@@ -296,42 +301,31 @@
         const toggleButton = document.createElement('button');
         toggleButton.className = 'toggle-button';
         toggleButton.innerHTML = isExpanded ? '▼' : '▲';
-        toggleButton.style.cssText = `
-            background: none;
-            border: none;
-            color: white;
-            cursor: pointer;
-            font-size: 12px;
-            padding: 0 5px;
-            transition: transform 0.2s;
-        `;
-
+        
         const mainContent = document.createElement('div');
         mainContent.id = 'counterContent';
-        mainContent.style.cssText = `
-            padding: 10px;
-            display: ${isExpanded ? 'block' : 'none'};
-            transition: all 0.3s ease;
-        `;
-
+        mainContent.className = isExpanded ? 'expanded' : '';
+        
         mainContent.innerHTML = `
-            <div class="counter-section">
-                <div class="section-title">Time in Current Case:</div>
-                <div id="timerDisplay" class="section-value">00:00:00</div>
-            </div>
-            <div class="counter-section">
-                <div class="section-title">Unique Cases Viewed:</div>
-                <div id="counterDisplay" class="section-value">${viewedCases.size}</div>
-            </div>
-            <div id="searchStatus" class="status-info"></div>
-            <div class="settings-section">
-                <div class="settings-title">Settings ▼</div>
-                <div class="settings-content">
-                    <div class="section-title">Counter Color:</div>
-                    <div class="color-palette">
-                        ${colorPalette.map(color =>
-                            `<button class="color-option" data-color="${color.color}" data-color-name="${color.name}" style="background: ${color.color}"></button>`
-                        ).join('')}
+            <div style="padding: 10px;">
+                <div class="counter-section">
+                    <div class="section-title">Time in Current Case:</div>
+                    <div id="timerDisplay" class="section-value">00:00:00</div>
+                </div>
+                <div class="counter-section">
+                    <div class="section-title">Unique Cases Viewed:</div>
+                    <div id="counterDisplay" class="section-value">${viewedCases.size}</div>
+                </div>
+                <div id="searchStatus" class="status-info"></div>
+                <div class="settings-section">
+                    <div class="settings-title">Settings ▼</div>
+                    <div class="settings-content">
+                        <div class="section-title">Counter Color:</div>
+                        <div class="color-palette">
+                            ${colorPalette.map(color => 
+                                `<button class="color-option" data-color="${color.color}" data-color-name="${color.name}" style="background: ${color.color}"></button>`
+                            ).join('')}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -339,10 +333,9 @@
 
         toggleButton.addEventListener('click', (e) => {
             e.stopPropagation();
-            const isCurrentlyExpanded = mainContent.style.display === 'block';
-            mainContent.style.display = isCurrentlyExpanded ? 'none' : 'block';
-            toggleButton.innerHTML = isCurrentlyExpanded ? '▲' : '▼';
-            GM_setValue('counterExpanded', !isCurrentlyExpanded);
+            mainContent.classList.toggle('expanded');
+            toggleButton.innerHTML = mainContent.classList.contains('expanded') ? '▼' : '▲';
+            GM_setValue('counterExpanded', mainContent.classList.contains('expanded'));
         });
 
         // Add Settings toggle functionality
@@ -360,7 +353,7 @@
         const resetButton = document.createElement('button');
         resetButton.id = 'resetCounter';
         resetButton.textContent = 'Reset Counter';
-
+        
         resetButton.addEventListener('click', function() {
             viewedCases.clear();
             lastProcessedCaseId = null;
@@ -379,7 +372,7 @@
 
         counter.appendChild(header);
         counter.appendChild(mainContent);
-        mainContent.appendChild(resetButton);
+        mainContent.querySelector('div').appendChild(resetButton);
         document.body.appendChild(counter);
 
         // Color option functionality
@@ -410,10 +403,11 @@
             }
         }
     }
+
     function updateCounter() {
         const currentCaseId = getCaseIdFromUrl();
         const searchStatus = document.getElementById('searchStatus');
-
+        
         if (isSearchByTaskId()) {
             if (searchStatus) {
                 searchStatus.textContent = '(Search-by-task-id: not counting)';
@@ -428,7 +422,7 @@
                 searchStatus.textContent = '';
             }
         }
-
+        
         if (currentCaseId && currentCaseId !== lastProcessedCaseId) {
             if (!viewedCases.has(currentCaseId)) {
                 viewedCases.add(currentCaseId);
@@ -438,7 +432,7 @@
                     counterDisplay.textContent = viewedCases.size;
                 }
             }
-
+            
             currentCaseIdForTimer = currentCaseId;
             lastProcessedCaseId = currentCaseId;
             startTimer(currentCaseId, true);
