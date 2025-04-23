@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tracker
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  Counts new case IDs and time spent per case in Paragon tool
 // @author       joelcarb@amazon.com
 // @match        https://paragon-na.amazon.com/hz/investigation*
@@ -17,6 +17,8 @@
     let currentCaseIdForTimer = null;
     let timerState = JSON.parse(GM_getValue('timerState', '{"caseId": null, "startTime": null}'));
     let lastProcessedCaseId = null;
+    let caseCount = Math.max(0, viewedCases.size - 1); // Initialize counter at 0
+    let isAvailable = true;
 
     // Color palette with names for tooltips
     const colorPalette = [
@@ -296,6 +298,39 @@
         document.addEventListener('mouseup', onDragEnd);
     }
 
+    function checkAvailability() {
+        const selectFieldP = document.querySelector('#selectField > p');
+        if (selectFieldP) {
+            const status = selectFieldP.textContent.trim();
+            console.log('Current status found:', status); // Debug log
+            isAvailable = status === 'Available';
+            if (!isAvailable) {
+                console.log('Status is Offline, should reset counter'); // Debug log
+            }
+            return isAvailable;
+        }
+        return true;
+    }
+
+    function resetCounterAndTimer() {
+        console.log('Resetting counter and timer'); // Debug log
+        viewedCases.clear();
+        lastProcessedCaseId = null;
+        GM_setValue('viewedCases', '[]');
+        const counterDisplay = document.getElementById('counterDisplay');
+        if (counterDisplay) {
+            counterDisplay.textContent = '0';
+        }
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
+        const timerDisplay = document.getElementById('timerDisplay');
+        if (timerDisplay) {
+            timerDisplay.textContent = '00:00:00';
+        }
+        clearAnnotation();
+    }
+
     function createCounter() {
         const counter = document.createElement('div');
         counter.id = 'caseCounter';
@@ -337,7 +372,7 @@
                 </div>
                 <div class="counter-section">
                     <div class="section-title">Unique Cases Viewed:</div>
-                    <div id="counterDisplay" class="section-value">${viewedCases.size}</div>
+                    <div id="counterDisplay" class="section-value">${Math.max(0, viewedCases.size - 1)}</div>
                 </div>
                 <div id="searchStatus" class="status-info"></div>
                 <div class="annotation-box">
@@ -365,7 +400,6 @@
             GM_setValue('counterExpanded', mainContent.classList.contains('expanded'));
         });
 
-        // Add Settings toggle functionality
         const settingsTitle = mainContent.querySelector('.settings-title');
         const settingsContent = mainContent.querySelector('.settings-content');
         settingsTitle.addEventListener('click', () => {
@@ -382,21 +416,7 @@
         resetButton.textContent = 'Reset Counter';
 
         resetButton.addEventListener('click', function() {
-            viewedCases.clear();
-            lastProcessedCaseId = null;
-            GM_setValue('viewedCases', '[]');
-            document.getElementById('counterDisplay').textContent = '0';
-            const currentCaseId = getCaseIdFromUrl();
-            if (currentCaseId && !isSearchByTaskId()) {
-                viewedCases.add(currentCaseId);
-                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-
-                document.getElementById('counterDisplay').textContent = '1';
-                currentCaseIdForTimer = currentCaseId;
-                lastProcessedCaseId = currentCaseId;
-                startTimer(currentCaseId, true);
-            }
-            clearAnnotation();
+            resetCounterAndTimer();
         });
 
         counter.appendChild(header);
@@ -404,7 +424,6 @@
         mainContent.querySelector('div').appendChild(resetButton);
         document.body.appendChild(counter);
 
-        // Color option functionality
         counter.querySelectorAll('.color-option').forEach(btn => {
             btn.addEventListener('click', function() {
                 const newColor = this.getAttribute('data-color');
@@ -417,11 +436,11 @@
         makeDraggable(counter, header);
 
         const initialCaseId = getCaseIdFromUrl();
-        if (initialCaseId && !isSearchByTaskId()) {
+        if (initialCaseId && !isSearchByTaskId() && checkAvailability()) {
             if (!viewedCases.has(initialCaseId)) {
                 viewedCases.add(initialCaseId);
                 GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-                document.getElementById('counterDisplay').textContent = viewedCases.size;
+                document.getElementById('counterDisplay').textContent = Math.max(0, viewedCases.size - 1);
             }
             currentCaseIdForTimer = initialCaseId;
             lastProcessedCaseId = initialCaseId;
@@ -434,6 +453,15 @@
     }
 
     function updateCounter() {
+        const currentAvailable = checkAvailability();
+        console.log('Checking availability:', currentAvailable); // Debug log
+
+        if (!currentAvailable) {
+            console.log('Not available, resetting counter'); // Debug log
+            resetCounterAndTimer();
+            return;
+        }
+
         const currentCaseId = getCaseIdFromUrl();
         const searchStatus = document.getElementById('searchStatus');
 
@@ -458,15 +486,69 @@
                 GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
                 const counterDisplay = document.getElementById('counterDisplay');
                 if (counterDisplay) {
-                    counterDisplay.textContent = viewedCases.size;
+                    counterDisplay.textContent = Math.max(0, viewedCases.size - 1);
                 }
             }
 
             currentCaseIdForTimer = currentCaseId;
             lastProcessedCaseId = currentCaseId;
             startTimer(currentCaseId, true);
-            clearAnnotation(); // Clear annotation when new case is loaded
+            clearAnnotation();
         }
+    }
+
+    function observeAvailabilityChanges() {
+        // Initial check
+        checkAvailability();
+
+        // Watch for changes in the specific element
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                const selectFieldP = document.querySelector('#selectField > p');
+                if (selectFieldP) {
+                    const currentStatus = selectFieldP.textContent.trim();
+                    console.log('Status change detected:', currentStatus); // Debug log
+
+                    const wasAvailable = isAvailable;
+                    isAvailable = currentStatus === 'Available';
+
+                    if (wasAvailable && !isAvailable) {
+                        console.log('Status changed from Available to Offline - Resetting counter'); // Debug log
+                        resetCounterAndTimer();
+                    }
+                }
+            });
+        });
+
+        // Find and observe the select field element
+        const selectField = document.querySelector('#selectField');
+        if (selectField) {
+            observer.observe(selectField, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+            console.log('Started observing selectField'); // Debug log
+        }
+
+        // Observe the body for the select field being added
+        const bodyObserver = new MutationObserver(() => {
+            const selectField = document.querySelector('#selectField');
+            if (selectField) {
+                observer.observe(selectField, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+                console.log('Found and started observing selectField'); // Debug log
+                bodyObserver.disconnect();
+            }
+        });
+
+        bodyObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
     }
 
     function checkUrlChange() {
@@ -491,5 +573,6 @@
         createCounter();
         updateCounter();
         checkUrlChange();
+        observeAvailabilityChanges();
     });
 })();
