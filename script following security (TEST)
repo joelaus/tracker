@@ -17,8 +17,6 @@
     let currentCaseIdForTimer = null;
     let timerState = JSON.parse(GM_getValue('timerState', '{"caseId": null, "startTime": null}'));
     let lastProcessedCaseId = null;
-    let caseCount = Math.max(0, viewedCases.size - 1); // Initialize counter at 0
-    let isAvailable = true;
 
     // Color palette with names for tooltips
     const colorPalette = [
@@ -33,6 +31,7 @@
         { color: '#C0392B', name: 'Red' },
         { color: '#7F8C8D', name: 'Gray' }
     ];
+
     function addGlobalStyles() {
         const styles = document.createElement('style');
         styles.textContent = `
@@ -165,15 +164,19 @@
                 bottom: 120%;
             }
             #counterContent {
-                transition: opacity 0.3s ease-out;
+                transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+                max-height: 0;
+                opacity: 0;
                 overflow: hidden;
             }
             #counterContent.expanded {
-                display: block;
+                max-height: 1000px;
+                opacity: 1;
             }
         `;
         document.head.appendChild(styles);
     }
+
     function getCaseIdFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
         return urlParams.get('caseId');
@@ -270,37 +273,6 @@
         document.addEventListener('mouseup', onDragEnd);
     }
 
-    function checkAvailability() {
-        const selectFieldP = document.querySelector('#selectField > p');
-        if (selectFieldP) {
-            const status = selectFieldP.textContent.trim();
-            console.log('Current status found:', status); // Debug log
-            isAvailable = status === 'Available';
-            if (!isAvailable) {
-                console.log('Status is Offline, should reset counter'); // Debug log
-            }
-            return isAvailable;
-        }
-        return true;
-    }
-
-    function resetCounterAndTimer() {
-        console.log('Resetting counter and timer'); // Debug log
-        viewedCases.clear();
-        lastProcessedCaseId = null;
-        GM_setValue('viewedCases', '[]');
-        const counterDisplay = document.getElementById('counterDisplay');
-        if (counterDisplay) {
-            counterDisplay.textContent = '0';
-        }
-        if (timerInterval) {
-            clearInterval(timerInterval);
-        }
-        const timerDisplay = document.getElementById('timerDisplay');
-        if (timerDisplay) {
-            timerDisplay.textContent = '00:00:00';
-        }
-    }
     function createCounter() {
         const counter = document.createElement('div');
         counter.id = 'caseCounter';
@@ -342,7 +314,7 @@
                 </div>
                 <div class="counter-section">
                     <div class="section-title">Unique Cases Viewed:</div>
-                    <div id="counterDisplay" class="section-value">${Math.max(0, viewedCases.size - 1)}</div>
+                    <div id="counterDisplay" class="section-value">${viewedCases.size}</div>
                 </div>
                 <div id="searchStatus" class="status-info"></div>
                 <div class="settings-section">
@@ -361,12 +333,12 @@
 
         toggleButton.addEventListener('click', (e) => {
             e.stopPropagation();
-            isExpanded = !isExpanded;
-            mainContent.className = isExpanded ? 'expanded' : '';
-            toggleButton.innerHTML = isExpanded ? '▼' : '▲';
-            GM_setValue('counterExpanded', isExpanded);
+            mainContent.classList.toggle('expanded');
+            toggleButton.innerHTML = mainContent.classList.contains('expanded') ? '▼' : '▲';
+            GM_setValue('counterExpanded', mainContent.classList.contains('expanded'));
         });
 
+        // Add Settings toggle functionality
         const settingsTitle = mainContent.querySelector('.settings-title');
         const settingsContent = mainContent.querySelector('.settings-content');
         settingsTitle.addEventListener('click', () => {
@@ -383,7 +355,19 @@
         resetButton.textContent = 'Reset Counter';
 
         resetButton.addEventListener('click', function() {
-            resetCounterAndTimer();
+            viewedCases.clear();
+            lastProcessedCaseId = null;
+            GM_setValue('viewedCases', '[]');
+            document.getElementById('counterDisplay').textContent = '0';
+            const currentCaseId = getCaseIdFromUrl();
+            if (currentCaseId && !isSearchByTaskId()) {
+                viewedCases.add(currentCaseId);
+                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
+                document.getElementById('counterDisplay').textContent = '1';
+                currentCaseIdForTimer = currentCaseId;
+                lastProcessedCaseId = currentCaseId;
+                startTimer(currentCaseId, true);
+            }
         });
 
         counter.appendChild(header);
@@ -391,6 +375,7 @@
         mainContent.querySelector('div').appendChild(resetButton);
         document.body.appendChild(counter);
 
+        // Color option functionality
         counter.querySelectorAll('.color-option').forEach(btn => {
             btn.addEventListener('click', function() {
                 const newColor = this.getAttribute('data-color');
@@ -403,11 +388,11 @@
         makeDraggable(counter, header);
 
         const initialCaseId = getCaseIdFromUrl();
-        if (initialCaseId && !isSearchByTaskId() && checkAvailability()) {
+        if (initialCaseId && !isSearchByTaskId()) {
             if (!viewedCases.has(initialCaseId)) {
                 viewedCases.add(initialCaseId);
                 GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-                document.getElementById('counterDisplay').textContent = Math.max(0, viewedCases.size - 1);
+                document.getElementById('counterDisplay').textContent = viewedCases.size;
             }
             currentCaseIdForTimer = initialCaseId;
             lastProcessedCaseId = initialCaseId;
@@ -418,16 +403,8 @@
             }
         }
     }
+
     function updateCounter() {
-        const currentAvailable = checkAvailability();
-        console.log('Checking availability:', currentAvailable); // Debug log
-
-        if (!currentAvailable) {
-            console.log('Not available, resetting counter'); // Debug log
-            resetCounterAndTimer();
-            return;
-        }
-
         const currentCaseId = getCaseIdFromUrl();
         const searchStatus = document.getElementById('searchStatus');
 
@@ -452,7 +429,7 @@
                 GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
                 const counterDisplay = document.getElementById('counterDisplay');
                 if (counterDisplay) {
-                    counterDisplay.textContent = Math.max(0, viewedCases.size - 1);
+                    counterDisplay.textContent = viewedCases.size;
                 }
             }
 
@@ -460,60 +437,6 @@
             lastProcessedCaseId = currentCaseId;
             startTimer(currentCaseId, true);
         }
-    }
-
-    function observeAvailabilityChanges() {
-        // Initial check
-        checkAvailability();
-
-        // Watch for changes in the specific element
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                const selectFieldP = document.querySelector('#selectField > p');
-                if (selectFieldP) {
-                    const currentStatus = selectFieldP.textContent.trim();
-                    console.log('Status change detected:', currentStatus); // Debug log
-
-                    const wasAvailable = isAvailable;
-                    isAvailable = currentStatus === 'Available';
-
-                    if (wasAvailable && !isAvailable) {
-                        console.log('Status changed from Available to Offline - Resetting counter'); // Debug log
-                        resetCounterAndTimer();
-                    }
-                }
-            });
-        });
-
-        // Find and observe the select field element
-        const selectField = document.querySelector('#selectField');
-        if (selectField) {
-            observer.observe(selectField, {
-                childList: true,
-                subtree: true,
-                characterData: true
-            });
-            console.log('Started observing selectField'); // Debug log
-        }
-
-        // Observe the body for the select field being added
-        const bodyObserver = new MutationObserver(() => {
-            const selectField = document.querySelector('#selectField');
-            if (selectField) {
-                observer.observe(selectField, {
-                    childList: true,
-                    subtree: true,
-                    characterData: true
-                });
-                console.log('Found and started observing selectField'); // Debug log
-                bodyObserver.disconnect();
-            }
-        });
-
-        bodyObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
     }
 
     function checkUrlChange() {
@@ -538,6 +461,5 @@
         createCounter();
         updateCounter();
         checkUrlChange();
-        observeAvailabilityChanges();
     });
 })();
