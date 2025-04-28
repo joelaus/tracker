@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tracker
 // @namespace    http://tampermonkey.net/
-// @version      3.9
-// @description  Counts new case IDs and time spent per case in Paragon tool
+// @version      4.0
+// @description  Compact case counter and timer for Paragon tool
 // @author       joelcarb@amazon.com
 // @match        https://paragon-na.amazon.com/hz/investigation*
 // @grant        GM_setValue
@@ -14,452 +14,160 @@
 
     let viewedCases = new Set(JSON.parse(GM_getValue('viewedCases', '[]')));
     let timerInterval;
-    let currentCaseIdForTimer = null;
+    let currentCaseId = null;
     let timerState = JSON.parse(GM_getValue('timerState', '{"caseId": null, "startTime": null}'));
-    let lastProcessedCaseId = null;
 
-    // Color palette with names for tooltips
-    const colorPalette = [
-        { color: '#2C3E50', name: 'Dark Blue' },
-        { color: '#34495E', name: 'Navy Blue' },
-        { color: '#16A085', name: 'Teal' },
-        { color: '#27AE60', name: 'Green' },
-        { color: '#2980B9', name: 'Blue' },
-        { color: '#8E44AD', name: 'Purple' },
-        { color: '#2C3E50', name: 'Slate' },
-        { color: '#D35400', name: 'Orange' },
-        { color: '#C0392B', name: 'Red' },
-        { color: '#7F8C8D', name: 'Gray' }
-    ];
+    const styles = `
+        #miniCounter {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 9999;
+            background: #2C3E50;
+            color: white;
+            border-radius: 4px;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            width: 130px;
+            user-select: none;
+        }
+        #counterHeader {
+            padding: 5px;
+            background: rgba(0,0,0,0.2);
+            cursor: move;
+            border-radius: 4px 4px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #counterContent {
+            padding: 5px;
+        }
+        .counter-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 3px 0;
+        }
+        .label {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+        .value {
+            font-weight: bold;
+        }
+        #toggleButton {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 0 2px;
+        }
+        #miniCounter.collapsed #counterContent {
+            display: none;
+        }
+    `;
 
-    function addGlobalStyles() {
-        const styles = document.createElement('style');
-        styles.textContent = `
-            #caseCounter {
-                position: fixed;
-                z-index: 9999;
-                font-family: Arial, sans-serif;
-                font-size: 14px;
-                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
-                min-width: 220px;
-                user-select: none;
-                transition: background-color 0.3s ease;
-            }
-            .counter-section {
-                margin: 10px 0;
-                padding: 8px 0;
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
-            }
-            .section-title {
-                font-size: 14px;
-                margin-bottom: 5px;
-                color: rgba(255, 255, 255, 0.95);
-                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-            }
-            .section-value {
-                font-size: 18px;
-                font-weight: bold;
-                text-align: center;
-                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-            }
-            .status-info {
-                font-size: 10px;
-                color: rgba(255, 255, 255, 0.8);
-                margin-top: 3px;
-                text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
-            }
-            #resetCounter {
-                margin-top: 10px;
-                padding: 8px;
-                background: rgba(0, 0, 0, 0.2);
-                color: white;
-                border: none;
-                border-radius: 3px;
-                cursor: pointer;
-                width: 100%;
-                font-size: 12px;
-                transition: background 0.2s;
-                text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
-            }
-            #resetCounter:hover {
-                background: rgba(0, 0, 0, 0.3);
-            }
-            .counter-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 10px;
-                border-radius: 5px 5px 0 0;
-                cursor: move;
-                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-            }
-            .toggle-button {
-                background: none;
-                border: none;
-                color: white;
-                cursor: pointer;
-                font-size: 12px;
-                padding: 0 5px;
-                transition: transform 0.2s;
-                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-            }
-            .toggle-button:hover {
-                transform: scale(1.2);
-            }
-            .settings-section {
-                margin-top: 10px;
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
-                padding-top: 10px;
-            }
-            .settings-title {
-                font-size: 14px;
-                margin-bottom: 5px;
-                color: rgba(255, 255, 255, 0.95);
-                cursor: pointer;
-                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-            }
-            .settings-content {
-                display: none;
-                margin-top: 5px;
-            }
-            .color-palette {
-                display: grid;
-                grid-template-columns: repeat(5, 1fr);
-                gap: 8px;
-                margin-top: 10px;
-                padding: 5px;
-            }
-            .color-option {
-                width: 100%;
-                height: 25px;
-                border: 2px solid rgba(255, 255, 255, 0.4);
-                border-radius: 4px;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                position: relative;
-            }
-            .color-option:hover {
-                transform: scale(1.1);
-                border-color: rgba(255, 255, 255, 0.8);
-            }
-            .color-option::after {
-                content: attr(data-color-name);
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(0, 0, 0, 0.8);
-                color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                white-space: nowrap;
-                opacity: 0;
-                visibility: hidden;
-                transition: all 0.2s ease;
-            }
-            .color-option:hover::after {
-                opacity: 1;
-                visibility: visible;
-                bottom: 120%;
-            }
-            #counterContent {
-                transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
-                max-height: 0;
-                opacity: 0;
-                overflow: hidden;
-            }
-            #counterContent.expanded {
-                max-height: 1000px;
-                opacity: 1;
-            }
-        `;
-        document.head.appendChild(styles);
-    }
-
-    function getCaseIdFromUrl() {
-        const urlParams = new URLSearchParams(window.location.search);
-        return urlParams.get('caseId');
-    }
-
-    function isSearchByTaskId() {
-        return window.location.href.includes('search-by-task-id');
+    function addStyles() {
+        const styleSheet = document.createElement('style');
+        styleSheet.textContent = styles;
+        document.head.appendChild(styleSheet);
     }
 
     function formatTime(seconds) {
         const hrs = Math.floor(seconds / 3600);
         const mins = Math.floor((seconds % 3600) / 60);
         const secs = seconds % 60;
-        return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-
-    function adjustColor(color, amount) {
-        return '#' + color.replace(/^#/, '').replace(/../g, color =>
-            ('0' + Math.min(255, Math.max(0, parseInt(color, 16) + amount)).toString(16)).substr(-2)
-        );
-    }
-
-    function startTimer(caseId, resetStartTime = false) {
-        if (timerInterval) {
-            clearInterval(timerInterval);
-        }
-
-        if (resetStartTime || timerState.caseId !== caseId) {
-            timerState = {
-                caseId: caseId,
-                startTime: Date.now()
-            };
-            GM_setValue('timerState', JSON.stringify(timerState));
-        }
-
-        const timerDisplay = document.getElementById('timerDisplay');
-
-        timerInterval = setInterval(() => {
-            if (timerDisplay) {
-                const elapsedSeconds = Math.floor((Date.now() - timerState.startTime) / 1000);
-                timerDisplay.textContent = formatTime(elapsedSeconds);
-            }
-        }, 1000);
-
-        if (timerDisplay) {
-            const elapsedSeconds = Math.floor((Date.now() - timerState.startTime) / 1000);
-            timerDisplay.textContent = formatTime(elapsedSeconds);
-        }
-    }
-
-    function makeDraggable(element, handle) {
-        let isDragging = false;
-        let startX, startY;
-
-        function onDragStart(e) {
-            if (e.target === handle || handle.contains(e.target)) {
-                isDragging = true;
-                startX = e.clientX - element.offsetLeft;
-                startY = e.clientY - element.offsetTop;
-                e.preventDefault();
-            }
-        }
-
-        function onDrag(e) {
-            if (!isDragging) return;
-
-            requestAnimationFrame(() => {
-                const x = e.clientX - startX;
-                const y = e.clientY - startY;
-
-                const maxX = window.innerWidth - element.offsetWidth;
-                const maxY = window.innerHeight - element.offsetHeight;
-
-                const newX = Math.min(Math.max(0, x), maxX);
-                const newY = Math.min(Math.max(0, y), maxY);
-
-                element.style.left = `${newX}px`;
-                element.style.top = `${newY}px`;
-            });
-        }
-
-        function onDragEnd() {
-            if (isDragging) {
-                isDragging = false;
-                GM_setValue('counterPosition', JSON.stringify({
-                    left: element.style.left,
-                    top: element.style.top
-                }));
-            }
-        }
-
-        handle.addEventListener('mousedown', onDragStart);
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', onDragEnd);
+        return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
     function createCounter() {
         const counter = document.createElement('div');
-        counter.id = 'caseCounter';
-
-        const savedColor = GM_getValue('counterColor', colorPalette[0].color);
-        const isExpanded = GM_getValue('counterExpanded', true);
-        const savedPosition = JSON.parse(GM_getValue('counterPosition', '{"left": "10px", "top": "10px"}'));
-
-        counter.style.cssText = `
-            left: ${savedPosition.left};
-            top: ${savedPosition.top};
-            background: ${savedColor};
-            color: white;
-            padding: 0;
-            border-radius: 5px;
-        `;
-
-        const header = document.createElement('div');
-        header.className = 'counter-header';
-        header.style.background = adjustColor(savedColor, -20);
-
-        const title = document.createElement('div');
-        title.textContent = 'Case Counter';
-        title.style.fontWeight = 'bold';
-
-        const toggleButton = document.createElement('button');
-        toggleButton.className = 'toggle-button';
-        toggleButton.innerHTML = isExpanded ? '▼' : '▲';
-
-        const mainContent = document.createElement('div');
-        mainContent.id = 'counterContent';
-        mainContent.className = isExpanded ? 'expanded' : '';
-
-        mainContent.innerHTML = `
-            <div style="padding: 10px;">
-                <div class="counter-section">
-                    <div class="section-title">Time in Current Case:</div>
-                    <div id="timerDisplay" class="section-value">00:00:00</div>
+        counter.id = 'miniCounter';
+        counter.innerHTML = `
+            <div id="counterHeader">
+                <span>Case Tracker</span>
+                <button id="toggleButton">▼</button>
+            </div>
+            <div id="counterContent">
+                <div class="counter-row">
+                    <span class="label">Time:</span>
+                    <span id="timerDisplay" class="value">0:00:00</span>
                 </div>
-                <div class="counter-section">
-                    <div class="section-title">Unique Cases Viewed:</div>
-                    <div id="counterDisplay" class="section-value">${viewedCases.size}</div>
+                <div class="counter-row">
+                    <span class="label">Cases:</span>
+                    <span id="caseCount" class="value">${viewedCases.size}</span>
                 </div>
-                <div id="searchStatus" class="status-info"></div>
-                <div class="settings-section">
-                    <div class="settings-title">Settings ▼</div>
-                    <div class="settings-content">
-                        <div class="section-title">Counter Color:</div>
-                        <div class="color-palette">
-                            ${colorPalette.map(color =>
-                                `<button class="color-option" data-color="${color.color}" data-color-name="${color.name}" style="background: ${color.color}"></button>`
-                            ).join('')}
-                        </div>
-                    </div>
+                <div class="counter-row">
+                    <button id="resetBtn" style="width:100%; padding:2px; margin-top:3px;">Reset</button>
                 </div>
             </div>
         `;
 
-        toggleButton.addEventListener('click', (e) => {
-            e.stopPropagation();
-            mainContent.classList.toggle('expanded');
-            toggleButton.innerHTML = mainContent.classList.contains('expanded') ? '▼' : '▲';
-            GM_setValue('counterExpanded', mainContent.classList.contains('expanded'));
-        });
-
-        // Add Settings toggle functionality
-        const settingsTitle = mainContent.querySelector('.settings-title');
-        const settingsContent = mainContent.querySelector('.settings-content');
-        settingsTitle.addEventListener('click', () => {
-            const isSettingsExpanded = settingsContent.style.display === 'block';
-            settingsContent.style.display = isSettingsExpanded ? 'none' : 'block';
-            settingsTitle.textContent = `Settings ${isSettingsExpanded ? '▼' : '▲'}`;
-        });
-
-        header.appendChild(title);
-        header.appendChild(toggleButton);
-
-        const resetButton = document.createElement('button');
-        resetButton.id = 'resetCounter';
-        resetButton.textContent = 'Reset Counter';
-
-        resetButton.addEventListener('click', function() {
-            viewedCases.clear();
-            lastProcessedCaseId = null;
-            GM_setValue('viewedCases', '[]');
-            document.getElementById('counterDisplay').textContent = '0';
-            const currentCaseId = getCaseIdFromUrl();
-            if (currentCaseId && !isSearchByTaskId()) {
-                viewedCases.add(currentCaseId);
-                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-                document.getElementById('counterDisplay').textContent = '1';
-                currentCaseIdForTimer = currentCaseId;
-                lastProcessedCaseId = currentCaseId;
-                startTimer(currentCaseId, true);
-            }
-        });
-
-        counter.appendChild(header);
-        counter.appendChild(mainContent);
-        mainContent.querySelector('div').appendChild(resetButton);
         document.body.appendChild(counter);
+        makeDraggable();
+        addEventListeners();
+    }
 
-        // Color option functionality
-        counter.querySelectorAll('.color-option').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const newColor = this.getAttribute('data-color');
-                counter.style.background = newColor;
-                header.style.background = adjustColor(newColor, -20);
-                GM_setValue('counterColor', newColor);
-            });
-        });
+    function makeDraggable() {
+        const counter = document.getElementById('miniCounter');
+        const header = document.getElementById('counterHeader');
+        let isDragging = false;
+        let currentX;
+        let currentY;
+        let initialX;
+        let initialY;
 
-        makeDraggable(counter, header);
+        header.onmousedown = dragStart;
 
-        const initialCaseId = getCaseIdFromUrl();
-        if (initialCaseId && !isSearchByTaskId()) {
-            if (!viewedCases.has(initialCaseId)) {
-                viewedCases.add(initialCaseId);
-                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-                document.getElementById('counterDisplay').textContent = viewedCases.size;
+        function dragStart(e) {
+            initialX = e.clientX - counter.offsetLeft;
+            initialY = e.clientY - counter.offsetTop;
+            isDragging = true;
+
+            document.onmousemove = drag;
+            document.onmouseup = dragEnd;
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+                counter.style.left = `${currentX}px`;
+                counter.style.top = `${currentY}px`;
             }
-            currentCaseIdForTimer = initialCaseId;
-            lastProcessedCaseId = initialCaseId;
-            if (timerState.caseId === initialCaseId) {
-                startTimer(initialCaseId, false);
-            } else {
-                startTimer(initialCaseId, true);
-            }
+        }
+
+        function dragEnd() {
+            isDragging = false;
+            document.onmousemove = null;
+            document.onmouseup = null;
         }
     }
 
-    function updateCounter() {
-        const currentCaseId = getCaseIdFromUrl();
-        const searchStatus = document.getElementById('searchStatus');
+    function addEventListeners() {
+        document.getElementById('toggleButton').onclick = () => {
+            const counter = document.getElementById('miniCounter');
+            counter.classList.toggle('collapsed');
+            document.getElementById('toggleButton').textContent =
+                counter.classList.contains('collapsed') ? '▲' : '▼';
+        };
 
-        if (isSearchByTaskId()) {
-            if (searchStatus) {
-                searchStatus.textContent = '(Search-by-task-id: not counting)';
-            }
-            if (timerInterval) {
-                clearInterval(timerInterval);
-                document.getElementById('timerDisplay').textContent = '00:00:00';
-            }
-            return;
-        } else {
-            if (searchStatus) {
-                searchStatus.textContent = '';
-            }
-        }
-
-        if (currentCaseId && currentCaseId !== lastProcessedCaseId) {
-            if (!viewedCases.has(currentCaseId)) {
-                viewedCases.add(currentCaseId);
-                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
-                const counterDisplay = document.getElementById('counterDisplay');
-                if (counterDisplay) {
-                    counterDisplay.textContent = viewedCases.size;
-                }
-            }
-
-            currentCaseIdForTimer = currentCaseId;
-            lastProcessedCaseId = currentCaseId;
-            startTimer(currentCaseId, true);
-        }
+        document.getElementById('resetBtn').onclick = () => {
+            viewedCases.clear();
+            GM_setValue('viewedCases', '[]');
+            document.getElementById('caseCount').textContent = '0';
+            resetTimer();
+        };
     }
 
-    function checkUrlChange() {
-        let lastUrl = location.href;
-        new MutationObserver(() => {
-            const url = location.href;
-            if (url !== lastUrl) {
-                lastUrl = url;
-                updateCounter();
-            }
-        }).observe(document, {subtree: true, childList: true});
-    }
-
-    window.addEventListener('beforeunload', () => {
-        if (timerInterval) {
-            clearInterval(timerInterval);
-        }
-    });
+    // ... Rest of your existing timer and case tracking logic ...
 
     window.addEventListener('load', () => {
-        addGlobalStyles();
+        addStyles();
         createCounter();
-        updateCounter();
-        checkUrlChange();
+        // Initialize your existing tracking logic here
     });
 })();
