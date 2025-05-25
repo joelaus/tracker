@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tracker
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      3.6
 // @description  Counts new case IDs and time spent per case in Paragon tool
 // @author       joelcarb@amazon.com
 // @match        https://paragon-na.amazon.com/hz/investigation*
@@ -17,7 +17,7 @@
     let currentCaseIdForTimer = null;
     let timerState = JSON.parse(GM_getValue('timerState', '{"caseId": null, "startTime": null}'));
     let lastProcessedCaseId = null;
-    let caseCount = Math.max(0, viewedCases.size - 1); // Initialize counter at 0
+    let caseCount = Math.max(0, viewedCases.size - 1);
     let isAvailable = true;
 
     // Color palette with names for tooltips
@@ -43,9 +43,12 @@
                 font-family: Arial, sans-serif;
                 font-size: 14px;
                 box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
-                min-width: 220px;
+                min-width: 180px;
+                min-height: 100px;
                 user-select: none;
                 transition: background-color 0.3s ease;
+                resize: both;
+                overflow: visible;
             }
             .counter-section {
                 margin: 10px 0;
@@ -175,26 +178,19 @@
                 max-height: 1000px;
                 opacity: 1;
             }
-            .annotation-box {
-                margin-top: 10px;
-                padding: 8px;
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
-            }
-            .annotation-textarea {
-                width: 100%;
-                min-height: 60px;
-                padding: 8px;
-                margin-top: 5px;
-                background: rgba(255, 255, 255, 0.9);
-                border: 1px solid rgba(0, 0, 0, 0.1);
-                border-radius: 4px;
-                font-size: 12px;
-                resize: vertical;
+            .resize-handle {
+                position: absolute;
+                right: 0;
+                bottom: 0;
+                width: 10px;
+                height: 10px;
+                cursor: se-resize;
+                background: rgba(255, 255, 255, 0.3);
+                border-radius: 0 0 5px 0;
             }
         `;
         document.head.appendChild(styles);
     }
-
     function getCaseIdFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
         return urlParams.get('caseId');
@@ -245,13 +241,6 @@
         }
     }
 
-    function clearAnnotation() {
-        const textarea = document.querySelector('.annotation-textarea');
-        if (textarea) {
-            textarea.value = '';
-        }
-    }
-
     function makeDraggable(element, handle) {
         let isDragging = false;
         let startX, startY;
@@ -264,7 +253,6 @@
                 e.preventDefault();
             }
         }
-
         function onDrag(e) {
             if (!isDragging) return;
 
@@ -302,10 +290,10 @@
         const selectFieldP = document.querySelector('#selectField > p');
         if (selectFieldP) {
             const status = selectFieldP.textContent.trim();
-            console.log('Current status found:', status); // Debug log
+            console.log('Current status found:', status);
             isAvailable = status === 'Available';
             if (!isAvailable) {
-                console.log('Status is Offline, should reset counter'); // Debug log
+                console.log('Status is Offline, should reset counter');
             }
             return isAvailable;
         }
@@ -313,7 +301,7 @@
     }
 
     function resetCounterAndTimer() {
-        console.log('Resetting counter and timer'); // Debug log
+        console.log('Resetting counter and timer');
         viewedCases.clear();
         lastProcessedCaseId = null;
         GM_setValue('viewedCases', '[]');
@@ -328,9 +316,7 @@
         if (timerDisplay) {
             timerDisplay.textContent = '00:00:00';
         }
-        clearAnnotation();
     }
-
     function createCounter() {
         const counter = document.createElement('div');
         counter.id = 'caseCounter';
@@ -338,10 +324,13 @@
         const savedColor = GM_getValue('counterColor', colorPalette[0].color);
         const isExpanded = GM_getValue('counterExpanded', true);
         const savedPosition = JSON.parse(GM_getValue('counterPosition', '{"left": "10px", "top": "10px"}'));
+        const savedSize = JSON.parse(GM_getValue('counterSize', '{"width": "180px", "height": "auto"}'));
 
         counter.style.cssText = `
             left: ${savedPosition.left};
             top: ${savedPosition.top};
+            width: ${savedSize.width};
+            height: ${savedSize.height};
             background: ${savedColor};
             color: white;
             padding: 0;
@@ -375,10 +364,6 @@
                     <div id="counterDisplay" class="section-value">${Math.max(0, viewedCases.size - 1)}</div>
                 </div>
                 <div id="searchStatus" class="status-info"></div>
-                <div class="annotation-box">
-                    <div class="section-title">Case Notes:</div>
-                    <textarea class="annotation-textarea" placeholder="Add your notes for this case..."></textarea>
-                </div>
                 <div class="settings-section">
                     <div class="settings-title">Settings ▼</div>
                     <div class="settings-content">
@@ -392,7 +377,6 @@
                 </div>
             </div>
         `;
-
         toggleButton.addEventListener('click', (e) => {
             e.stopPropagation();
             mainContent.classList.toggle('expanded');
@@ -422,6 +406,11 @@
         counter.appendChild(header);
         counter.appendChild(mainContent);
         mainContent.querySelector('div').appendChild(resetButton);
+
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'resize-handle';
+        counter.appendChild(resizeHandle);
+
         document.body.appendChild(counter);
 
         counter.querySelectorAll('.color-option').forEach(btn => {
@@ -434,6 +423,30 @@
         });
 
         makeDraggable(counter, header);
+
+        // Add resize functionality
+        let isResizing = false;
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const width = e.clientX - counter.offsetLeft;
+            const height = e.clientY - counter.offsetTop;
+            counter.style.width = `${width}px`;
+            counter.style.height = `${height}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                GM_setValue('counterSize', JSON.stringify({
+                    width: counter.style.width,
+                    height: counter.style.height
+                }));
+            }
+        });
 
         const initialCaseId = getCaseIdFromUrl();
         if (initialCaseId && !isSearchByTaskId() && checkAvailability()) {
@@ -454,10 +467,10 @@
 
     function updateCounter() {
         const currentAvailable = checkAvailability();
-        console.log('Checking availability:', currentAvailable); // Debug log
+        console.log('Checking availability:', currentAvailable);
 
         if (!currentAvailable) {
-            console.log('Not available, resetting counter'); // Debug log
+            console.log('Not available, resetting counter');
             resetCounterAndTimer();
             return;
         }
@@ -493,34 +506,30 @@
             currentCaseIdForTimer = currentCaseId;
             lastProcessedCaseId = currentCaseId;
             startTimer(currentCaseId, true);
-            clearAnnotation();
         }
     }
 
     function observeAvailabilityChanges() {
-        // Initial check
         checkAvailability();
 
-        // Watch for changes in the specific element
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 const selectFieldP = document.querySelector('#selectField > p');
                 if (selectFieldP) {
                     const currentStatus = selectFieldP.textContent.trim();
-                    console.log('Status change detected:', currentStatus); // Debug log
+                    console.log('Status change detected:', currentStatus);
 
                     const wasAvailable = isAvailable;
                     isAvailable = currentStatus === 'Available';
 
                     if (wasAvailable && !isAvailable) {
-                        console.log('Status changed from Available to Offline - Resetting counter'); // Debug log
+                        console.log('Status changed from Available to Offline - Resetting counter');
                         resetCounterAndTimer();
                     }
                 }
             });
         });
 
-        // Find and observe the select field element
         const selectField = document.querySelector('#selectField');
         if (selectField) {
             observer.observe(selectField, {
@@ -528,10 +537,9 @@
                 subtree: true,
                 characterData: true
             });
-            console.log('Started observing selectField'); // Debug log
+            console.log('Started observing selectField');
         }
 
-        // Observe the body for the select field being added
         const bodyObserver = new MutationObserver(() => {
             const selectField = document.querySelector('#selectField');
             if (selectField) {
@@ -540,7 +548,7 @@
                     subtree: true,
                     characterData: true
                 });
-                console.log('Found and started observing selectField'); // Debug log
+                console.log('Found and started observing selectField');
                 bodyObserver.disconnect();
             }
         });
