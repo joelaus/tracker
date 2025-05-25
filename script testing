@@ -113,6 +113,13 @@
                 transform: scale(1.1);
                 border-color: white;
             }
+            #searchStatus {
+                font-size: 10px;
+                color: rgba(255,255,255,0.7);
+                text-align: center;
+                margin: 3px 0;
+                min-height: 12px;
+            }
         `;
         document.head.appendChild(styleSheet);
     }
@@ -152,6 +159,7 @@
                     <span class="label">Cases:</span>
                     <span id="caseCount" class="value">${viewedCases.size}</span>
                 </div>
+                <div id="searchStatus"></div>
                 <div class="counter-row">
                     <button id="resetBtn" style="width:100%; padding:2px; margin-top:3px;">Reset</button>
                 </div>
@@ -270,6 +278,8 @@
             GM_setValue('viewedCases', '[]');
             document.getElementById('caseCount').textContent = '0';
             resetTimer();
+            // Clear search status when resetting
+            document.getElementById('searchStatus').textContent = '';
         };
     }
 
@@ -314,6 +324,25 @@
 
     function updateCounter() {
         const newCaseId = getCaseIdFromUrl();
+        const searchStatus = document.getElementById('searchStatus');
+
+        // Check if the current URL contains "search-by-task-id"
+        if (window.location.href.includes('search-by-task-id')) {
+            if (searchStatus) {
+                searchStatus.textContent = '(Search-by-task-id: not counting)';
+            }
+            // Don't update counter or timer for task ID searches
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                document.getElementById('timerDisplay').textContent = '0:00:00';
+            }
+            return;
+        } else {
+            // Clear the status message when not in task-id search
+            if (searchStatus) {
+                searchStatus.textContent = '';
+            }
+        }
 
         if (newCaseId && newCaseId !== currentCaseId) {
             currentCaseId = newCaseId;
