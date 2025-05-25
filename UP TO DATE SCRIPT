@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tracker
 // @namespace    http://tampermonkey.net/
-// @version      4.2
-// @description  Compact case counter and timer for Paragon tool with color settings
+// @version      4.0
+// @description  Compact case counter and timer for Paragon tool
 // @author       joelcarb@amazon.com
 // @match        https://paragon-na.amazon.com/hz/investigation*
 // @grant        GM_setValue
@@ -13,74 +13,116 @@
     'use strict';
 
     let viewedCases = new Set(JSON.parse(GM_getValue('viewedCases', '[]')));
-    let timerInterval, currentCaseId = null, startTime = Date.now();
-    const savedPosition = JSON.parse(GM_getValue('counterPosition', '{"left": "10px", "top": "10px"}'));
-    const isExpanded = GM_getValue('counterExpanded', true);
-    const colorPalette = [
-        { color: '#2C3E50', name: 'Dark Blue' },
-        { color: '#34495E', name: 'Navy Blue' },
-        { color: '#16A085', name: 'Teal' },
-        { color: '#27AE60', name: 'Green' },
-        { color: '#2980B9', name: 'Blue' },
-        { color: '#8E44AD', name: 'Purple' },
-        { color: '#D35400', name: 'Orange' },
-        { color: '#C0392B', name: 'Red' },
-        { color: '#7F8C8D', name: 'Gray' }
-    ];
+    let timerInterval;
+    let currentCaseId = null;
+    let timerState = JSON.parse(GM_getValue('timerState', '{"caseId": null, "startTime": null}'));
 
     function addStyles() {
-        const styles = `
+        const styleSheet = document.createElement('style');
+        styleSheet.textContent = `
             #miniCounter {
-                position: fixed; top: ${savedPosition.top}; left: ${savedPosition.left}; z-index: 9999;
-                background: #2C3E50; color: white; border-radius: 8px; font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); width: 130px; user-select: none;
-                opacity: 0.9; transition: opacity 0.3s ease; min-width: 120px; resize: both; overflow: hidden;
+                position: fixed;
+                top: 10px;
+                left: 10px;
+                z-index: 9999;
+                background: #2C3E50;
+                color: white;
+                border-radius: 4px;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                width: 130px;
+                user-select: none;
             }
-            #miniCounter:hover { opacity: 1; }
             #counterHeader {
-                padding: 6px 8px; background: rgba(0,0,0,0.2); cursor: move; border-radius: 8px 8px 0 0;
-                display: flex; justify-content: space-between; align-items: center;
+                padding: 5px;
+                background: rgba(0,0,0,0.2);
+                cursor: move;
+                border-radius: 4px 4px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
             #counterContent {
-                padding: 0; transition: all 0.3s ease; max-height: 0; overflow: hidden;
+                padding: 5px;
             }
-            #counterContent.expanded { padding: 8px; max-height: 500px; }
             .counter-row {
-                display: flex; justify-content: space-between; align-items: center; margin: 4px 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin: 3px 0;
             }
-            .label { font-size: 10px; opacity: 0.8; }
-            .value { font-weight: bold; font-size: 14px; }
-            #headerControls {
-                position: relative; display: flex; align-items: center; gap: 5px;
+            .label {
+                font-size: 11px;
+                opacity: 0.8;
             }
-            #toggleButton, .gear-button {
-                background: none; border: none; color: white; cursor: pointer; padding: 0 2px;
-                opacity: 0.8; font-size: 12px;
+            .value {
+                font-weight: bold;
             }
-            #toggleButton:hover, .gear-button:hover { opacity: 1; }
+            #toggleButton {
+                background: none;
+                border: none;
+                color: white;
+                cursor: pointer;
+                padding: 0 2px;
+            }
+            #miniCounter.collapsed #counterContent {
+                display: none;
+            }
             #resetBtn {
-                width: 100%; padding: 4px; margin-top: 6px; background: rgba(255,255,255,0.1);
-                border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 10px;
+                background: rgba(0,0,0,0.2);
+                border: none;
+                color: white;
+                cursor: pointer;
+                border-radius: 3px;
             }
-            #resetBtn:hover { background: rgba(255,255,255,0.2); }
-            .color-dropdown {
-                position: absolute; top: 100%; right: 0; background: #34495E; border-radius: 4px;
-                padding: 5px; display: none; width: 120px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 10000;
+            #resetBtn:hover {
+                background: rgba(0,0,0,0.3);
+            }
+            #settingsButton {
+                background: none;
+                border: none;
+                color: white;
+                cursor: pointer;
+                padding: 0 2px;
+                font-size: 11px;
+                margin-right: 5px;
+            }
+            #colorPicker {
+                position: absolute;
+                top: 100%;
+                right: 0;
+                background: #34495e;
+                border-radius: 4px;
+                padding: 5px;
+                display: none;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 5px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                z-index: 10000;
             }
             .color-option {
-                width: 100%; padding: 4px; margin: 2px 0; border: none; border-radius: 3px; cursor: pointer;
-                text-align: left; color: white; display: flex; align-items: center; gap: 5px; background: none;
+                width: 20px;
+                height: 20px;
+                border-radius: 3px;
+                border: 2px solid transparent;
+                cursor: pointer;
+                transition: transform 0.2s;
             }
-            .color-option:hover { background: rgba(255,255,255,0.1); }
-            .color-preview {
-                width: 12px; height: 12px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.2);
+            .color-option:hover {
+                transform: scale(1.1);
+                border-color: white;
+            }
+            #searchStatus {
+                font-size: 10px;
+                color: rgba(255,255,255,0.7);
+                text-align: center;
+                margin: 3px 0;
+                min-height: 12px;
             }
         `;
-        const styleSheet = document.createElement('style');
-        styleSheet.textContent = styles;
         document.head.appendChild(styleSheet);
     }
-
     function formatTime(seconds) {
         const hrs = Math.floor(seconds / 3600);
         const mins = Math.floor((seconds % 3600) / 60);
@@ -88,26 +130,191 @@
         return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
-    function updateTimer() {
-        const timerDisplay = document.getElementById('timerDisplay');
-        if (timerDisplay && startTime) {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            timerDisplay.textContent = formatTime(elapsed);
+    function adjustColor(color, amount) {
+        const hex = color.replace('#', '');
+        const r = Math.max(0, Math.min(255, parseInt(hex.substr(0, 2), 16) + amount));
+        const g = Math.max(0, Math.min(255, parseInt(hex.substr(2, 2), 16) + amount));
+        const b = Math.max(0, Math.min(255, parseInt(hex.substr(4, 2), 16) + amount));
+        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    }
+
+    function createCounter() {
+        const counter = document.createElement('div');
+        counter.id = 'miniCounter';
+        counter.innerHTML = `
+            <div id="counterHeader">
+                <span>Case Tracker</span>
+                <div style="display: flex; align-items: center;">
+                    <button id="settingsButton">⚙️</button>
+                    <button id="toggleButton">▼</button>
+                </div>
+            </div>
+            <div id="colorPicker"></div>
+            <div id="counterContent">
+                <div class="counter-row">
+                    <span class="label">Time:</span>
+                    <span id="timerDisplay" class="value">0:00:00</span>
+                </div>
+                <div class="counter-row">
+                    <span class="label">Cases:</span>
+                    <span id="caseCount" class="value">${viewedCases.size}</span>
+                </div>
+                <div id="searchStatus"></div>
+                <div class="counter-row">
+                    <button id="resetBtn" style="width:100%; padding:2px; margin-top:3px;">Reset</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(counter);
+        makeDraggable();
+        addEventListeners();
+    }
+
+    function initializeColorPicker() {
+        const colors = [
+            '#2C3E50', '#34495E', '#16A085',
+            '#27AE60', '#2980B9', '#8E44AD',
+            '#C0392B', '#D35400', '#E67E22'
+        ];
+
+        const colorPicker = document.getElementById('colorPicker');
+        colors.forEach(color => {
+            const colorOption = document.createElement('div');
+            colorOption.className = 'color-option';
+            colorOption.style.backgroundColor = color;
+            colorOption.onclick = () => {
+                const counter = document.getElementById('miniCounter');
+                const header = document.getElementById('counterHeader');
+                counter.style.background = color;
+                header.style.background = adjustColor(color, -20);
+                GM_setValue('counterColor', color);
+                colorPicker.style.display = 'none';
+            };
+            colorPicker.appendChild(colorOption);
+        });
+
+        // Load saved color
+        const savedColor = GM_getValue('counterColor', '#2C3E50');
+        const counter = document.getElementById('miniCounter');
+        const header = document.getElementById('counterHeader');
+        counter.style.background = savedColor;
+        header.style.background = adjustColor(savedColor, -20);
+
+        // Toggle color picker
+        document.getElementById('settingsButton').onclick = (e) => {
+            e.stopPropagation();
+            colorPicker.style.display = colorPicker.style.display === 'grid' ? 'none' : 'grid';
+        };
+
+        // Close color picker when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!colorPicker.contains(e.target) && e.target.id !== 'settingsButton') {
+                colorPicker.style.display = 'none';
+            }
+        });
+    }
+    function makeDraggable() {
+        const counter = document.getElementById('miniCounter');
+        const header = document.getElementById('counterHeader');
+        let isDragging = false;
+        let currentX;
+        let currentY;
+        let initialX;
+        let initialY;
+
+        // Load saved position
+        const savedPosition = JSON.parse(GM_getValue('counterPosition', '{"left": "10px", "top": "10px"}'));
+        counter.style.left = savedPosition.left;
+        counter.style.top = savedPosition.top;
+
+        header.onmousedown = dragStart;
+
+        function dragStart(e) {
+            if (e.target === header || header.contains(e.target)) {
+                initialX = e.clientX - counter.offsetLeft;
+                initialY = e.clientY - counter.offsetTop;
+                isDragging = true;
+
+                document.onmousemove = drag;
+                document.onmouseup = dragEnd;
+            }
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+                counter.style.left = `${currentX}px`;
+                counter.style.top = `${currentY}px`;
+            }
+        }
+
+        function dragEnd() {
+            if (isDragging) {
+                isDragging = false;
+                // Save position when dragging ends
+                GM_setValue('counterPosition', JSON.stringify({
+                    left: counter.style.left,
+                    top: counter.style.top
+                }));
+                document.onmousemove = null;
+                document.onmouseup = null;
+            }
         }
     }
 
-    function startTimer() {
-        if (timerInterval) clearInterval(timerInterval);
-        startTime = Date.now();
-        updateTimer();
-        timerInterval = setInterval(updateTimer, 1000);
+    function addEventListeners() {
+        document.getElementById('toggleButton').onclick = () => {
+            const counter = document.getElementById('miniCounter');
+            counter.classList.toggle('collapsed');
+            document.getElementById('toggleButton').textContent =
+                counter.classList.contains('collapsed') ? '▲' : '▼';
+        };
+
+        document.getElementById('resetBtn').onclick = () => {
+            viewedCases.clear();
+            GM_setValue('viewedCases', '[]');
+            document.getElementById('caseCount').textContent = '0';
+            resetTimer();
+            // Clear search status when resetting
+            document.getElementById('searchStatus').textContent = '';
+        };
     }
 
-    function resetTimer() {
-        if (timerInterval) clearInterval(timerInterval);
-        startTime = Date.now();
+    function startTimer(caseId) {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
+
+        if (timerState.caseId !== caseId) {
+            timerState = {
+                caseId: caseId,
+                startTime: Date.now()
+            };
+            GM_setValue('timerState', JSON.stringify(timerState));
+        }
+
         const timerDisplay = document.getElementById('timerDisplay');
-        if (timerDisplay) timerDisplay.textContent = '0:00:00';
+        if (timerDisplay) {
+            timerInterval = setInterval(() => {
+                const elapsedSeconds = Math.floor((Date.now() - timerState.startTime) / 1000);
+                timerDisplay.textContent = formatTime(elapsedSeconds);
+            }, 1000);
+
+            // Initial display
+            const elapsedSeconds = Math.floor((Date.now() - timerState.startTime) / 1000);
+            timerDisplay.textContent = formatTime(elapsedSeconds);
+        }
+    }
+    function resetTimer() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
+        document.getElementById('timerDisplay').textContent = '0:00:00';
+        timerState = {caseId: null, startTime: null};
+        GM_setValue('timerState', JSON.stringify(timerState));
     }
 
     function getCaseIdFromUrl() {
@@ -115,181 +322,63 @@
         return urlParams.get('caseId');
     }
 
-    function adjustColor(color, amount) {
-        return '#' + color.replace(/^#/, '').replace(/../g, color =>
-            ('0' + Math.min(255, Math.max(0, parseInt(color, 16) + amount)).toString(16)).substr(-2)
-        );
-    }
-
-    function createCounter() {
-        const savedColor = GM_getValue('counterColor', colorPalette[0].color);
-        const counter = document.createElement('div');
-        counter.id = 'miniCounter';
-        counter.style.background = savedColor;
-        counter.innerHTML = `
-            <div id="counterHeader" style="background: ${adjustColor(savedColor, -20)}">
-                <span>Case Tracker</span>
-                <div id="headerControls">
-                    <button class="gear-button" id="settingsButton">⚙️</button>
-                    <button id="toggleButton">${isExpanded ? '▼' : '▲'}</button>
-                    <div class="color-dropdown" id="colorDropdown">
-                        ${colorPalette.map(color => `
-                            <button class="color-option" data-color="${color.color}">
-                                <span class="color-preview" style="background: ${color.color}"></span>
-                                <span>${color.name}</span>
-                            </button>
-                        `).join('')}
-                    </div>
-                </div>
-            </div>
-            <div id="counterContent" class="${isExpanded ? 'expanded' : ''}">
-                <div class="counter-row">
-                    <span class="label">Time:</span>
-                    <span id="timerDisplay" class="value">0:00:00</span>
-                </div>
-                <div class="counter-row">
-                    <span class="label">Cases:</span>
-                    <span id="caseCount" class="value">${Math.max(0, viewedCases.size)}</span>
-                </div>
-                <button id="resetBtn">Reset</button>
-            </div>
-        `;
-        document.body.appendChild(counter);
-        makeDraggable();
-        addEventListeners();
-        startTimer();
-    }
-
-    function makeDraggable() {
-        const counter = document.getElementById('miniCounter');
-        const header = document.getElementById('counterHeader');
-        let isDragging = false, startX, startY, startLeft, startTop;
-
-        header.onmousedown = e => {
-            if (e.target === header || header.contains(e.target)) {
-                isDragging = true;
-                startX = e.clientX; startY = e.clientY;
-                startLeft = counter.offsetLeft; startTop = counter.offsetTop;
-                e.preventDefault();
-            }
-        };
-
-        document.onmousemove = e => {
-            if (!isDragging) return;
-            const dx = e.clientX - startX, dy = e.clientY - startY;
-            const newLeft = startLeft + dx, newTop = startTop + dy;
-            counter.style.left = `${Math.max(0, Math.min(newLeft, window.innerWidth - counter.offsetWidth))}px`;
-            counter.style.top = `${Math.max(0, Math.min(newTop, window.innerHeight - counter.offsetHeight))}px`;
-        };
-
-        document.onmouseup = () => {
-            if (isDragging) {
-                isDragging = false;
-                GM_setValue('counterPosition', JSON.stringify({
-                    left: counter.style.left,
-                    top: counter.style.top
-                }));
-            }
-        };
-    }
-
-    function addEventListeners() {
-        const content = document.getElementById('counterContent');
-        const toggleButton = document.getElementById('toggleButton');
-        const settingsButton = document.getElementById('settingsButton');
-        const colorDropdown = document.getElementById('colorDropdown');
-        const resetBtn = document.getElementById('resetBtn');
-
-        toggleButton.onclick = (e) => {
-            e.stopPropagation();
-            content.classList.toggle('expanded');
-            toggleButton.textContent = content.classList.contains('expanded') ? '▼' : '▲';
-            GM_setValue('counterExpanded', content.classList.contains('expanded'));
-        };
-
-        resetBtn.onclick = () => {
-            viewedCases.clear();
-            GM_setValue('viewedCases', '[]');
-            document.getElementById('caseCount').textContent = '0';
-            resetTimer();
-            startTimer();
-        };
-
-        settingsButton.onclick = (e) => {
-            e.stopPropagation();
-            colorDropdown.style.display = colorDropdown.style.display === 'block' ? 'none' : 'block';
-        };
-
-        document.querySelectorAll('.color-option').forEach(option => {
-            option.onclick = (e) => {
-                e.stopPropagation();
-                const newColor = option.dataset.color;
-                const counter = document.getElementById('miniCounter');
-                const header = document.getElementById('counterHeader');
-                counter.style.background = newColor;
-                header.style.background = adjustColor(newColor, -20);
-                GM_setValue('counterColor', newColor);
-                colorDropdown.style.display = 'none';
-            };
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!colorDropdown.contains(e.target) && e.target !== settingsButton) {
-                colorDropdown.style.display = 'none';
-            }
-        });
-    }
-
     function updateCounter() {
-        const caseId = getCaseIdFromUrl();
-        if (caseId) {
-            if (!viewedCases.has(caseId)) {
-                viewedCases.add(caseId);
-                GM_setValue('viewedCases', JSON.stringify(Array.from(viewedCases)));
-                const caseCount = document.getElementById('caseCount');
-                if (caseCount) caseCount.textContent = viewedCases.size;
+        const newCaseId = getCaseIdFromUrl();
+        const searchStatus = document.getElementById('searchStatus');
+
+        // Check if the current URL contains "search-by-task-id"
+        if (window.location.href.includes('search-by-task-id')) {
+            if (searchStatus) {
+                searchStatus.textContent = '(Search-by-task-id: not counting)';
             }
-            if (currentCaseId !== caseId) {
-                currentCaseId = caseId;
-                resetTimer();
-                startTimer();
+            // Don't update counter or timer for task ID searches
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                document.getElementById('timerDisplay').textContent = '0:00:00';
             }
+            return;
+        } else {
+            // Clear the status message when not in task-id search
+            if (searchStatus) {
+                searchStatus.textContent = '';
+            }
+        }
+
+        if (newCaseId && newCaseId !== currentCaseId) {
+            currentCaseId = newCaseId;
+
+            if (!viewedCases.has(newCaseId)) {
+                viewedCases.add(newCaseId);
+                GM_setValue('viewedCases', JSON.stringify([...viewedCases]));
+                document.getElementById('caseCount').textContent = viewedCases.size;
+            }
+
+            startTimer(newCaseId);
         }
     }
 
     function checkUrlChange() {
-        const url = window.location.href;
-        const caseIdMatch = url.match(/investigation\/([A-Za-z0-9-]+)/);
-        if (caseIdMatch && caseIdMatch[1]) {
-            const caseId = caseIdMatch[1];
-            if (!viewedCases.has(caseId)) {
-                viewedCases.add(caseId);
-                GM_setValue('viewedCases', JSON.stringify(Array.from(viewedCases)));
-                const caseCount = document.getElementById('caseCount');
-                if (caseCount) caseCount.textContent = viewedCases.size;
-            }
-            if (currentCaseId !== caseId) {
-                currentCaseId = caseId;
-                resetTimer();
-                startTimer();
-            }
-        }
-    }
-
-    window.addEventListener('load', () => {
-        addStyles();
-        createCounter();
-        updateCounter();
+        let lastUrl = location.href;
         new MutationObserver(() => {
-            const url = window.location.href;
-            if (url !== window.lastUrl) {
-                window.lastUrl = url;
-                checkUrlChange();
+            const url = location.href;
+            if (url !== lastUrl) {
+                lastUrl = url;
+                updateCounter();
             }
         }).observe(document, {subtree: true, childList: true});
-    });
+    }
 
+    // Initialize everything
+    addStyles();
+    createCounter();
+    initializeColorPicker();
+    updateCounter();
+    checkUrlChange();
+
+    // Cleanup on page unload
     window.addEventListener('beforeunload', () => {
-        if (timerInterval) clearInterval(timerInterval);
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
     });
 })();
